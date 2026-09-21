@@ -5,8 +5,8 @@ export type ClientEvent =
   | { type: "session.new"; title?: string };
 
 export type ToolEvent =
-  | { type: "tool.start"; name: string; summary: string }
-  | { type: "tool.result"; name: string; ok: boolean; preview: string };
+  | { type: "tool.start"; name: string; summary: string; permission?: "auto" | "asked" | "skipped" }
+  | { type: "tool.result"; name: string; ok: boolean; preview: string; permission?: "auto" | "asked" | "skipped" };
 
 export type ServerEvent =
   | { type: "session.created"; session: Session }
