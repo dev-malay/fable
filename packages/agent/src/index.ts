@@ -1,9 +1,10 @@
 import OpenAI from "openai";
-import type { Session, TokenUsage, ToolEvent, ChatMessage } from "@riox/protocol";
+import type { Session, TokenUsage, ToolEvent, ChatMessage, PermissionDecision, PermissionRule, PermissionMode } from "@riox/protocol";
 import { executeTool, safeSummarize, TOOL_MAP, toOpenAITools } from "./tools/registry.js";
 import type { ToolContext, ToolInput } from "./tools/types.js";
 import { CODING_SYSTEM_PROMPT } from "./repl.js";
 import { sessionStore } from "./session.js";
+import { permissionEngine, PermissionEngine } from "./permissions.js";
 
 export const ENGINE = "openrouter" as const;
 export const VERSION = "0.1.0";
@@ -26,8 +27,10 @@ export interface RunOptions {
   maxTurns?: number;
   cwd?: string;
   skipPermissions?: boolean;
+  permissionMode?: PermissionMode;
   onUsage?: (usage: TokenUsage) => void;
   onToolEvent?: (event: ToolEvent) => void;
+  onPermissionPrompt?: (tool: string, summary: string, input: Record<string, unknown>) => Promise<"allow" | "deny">;
 }
 
 function readApiKey(): string {
@@ -87,6 +90,10 @@ function toChatMessage(role: "user" | "assistant", content: string, sessionId: s
 
 export async function* runPrompt(prompt: string, options: RunOptions = {}): AsyncGenerator<string> {
   if (prompt.trim() === "") throw new Error('empty prompt — usage: riox -p "hello"');
+  await permissionEngine.load();
+  if (options.permissionMode) {
+    permissionEngine.setMode(options.permissionMode);
+  }
   const client = new OpenAI({
     baseURL: BASE_URL,
     apiKey: readApiKey(),
@@ -155,7 +162,7 @@ export async function* runPrompt(prompt: string, options: RunOptions = {}): Asyn
     for (const call of ordered) {
       const def = TOOL_MAP.get(call.name);
       if (!def) {
-        options.onToolEvent?.({ type: "tool.result", name: call.name, ok: false, preview: "unknown tool" });
+        options.onToolEvent?.({ type: "tool.result", name: call.name, ok: false, preview: "unknown tool", permission: "skipped" });
         toolMessages.push({ role: "tool", tool_call_id: call.id, content: `ERROR: unknown tool "${call.name}"` });
         continue;
       }
@@ -164,14 +171,46 @@ export async function* runPrompt(prompt: string, options: RunOptions = {}): Asyn
         input = parseInput(call.args);
       } catch (error) {
         const message = error instanceof Error ? error.message : "invalid arguments";
-        options.onToolEvent?.({ type: "tool.result", name: def.name, ok: false, preview: message });
+        options.onToolEvent?.({ type: "tool.result", name: def.name, ok: false, preview: message, permission: "skipped" });
         toolMessages.push({ role: "tool", tool_call_id: call.id, content: `ERROR: ${message}` });
         continue;
       }
-      options.onToolEvent?.({ type: "tool.start", name: def.name, summary: safeSummarize(def, input) });
-      const { ok, result } = await executeTool(def, input, ctx);
-      options.onToolEvent?.({ type: "tool.result", name: def.name, ok, preview: result.slice(0, 160) });
-      toolMessages.push({ role: "tool", tool_call_id: call.id, content: result });
+      const decision = permissionEngine.evaluate(def.name, input);
+      const permissionEvent: "auto" | "asked" | "skipped" = decision === "ask" ? "asked" : decision === "allow" ? "auto" : "skipped";
+      options.onToolEvent?.({ type: "tool.start", name: def.name, summary: safeSummarize(def, input), permission: permissionEvent });
+
+      let ok = false;
+      let result = "";
+      if (decision === "allow") {
+        const execResult = await executeTool(def, input, ctx);
+        ok = execResult.ok;
+        result = execResult.result;
+      } else if (decision === "deny") {
+        ok = false;
+        result = `DENIED: ${def.name} not allowed by permission rules`;
+      } else {
+        // decision === ask
+        if (options.onPermissionPrompt) {
+          const userDecision = await options.onPermissionPrompt(def.name, safeSummarize(def, input), input);
+          if (userDecision === "allow") {
+            const execResult = await executeTool(def, input, ctx);
+            ok = execResult.ok;
+            result = execResult.result;
+          } else {
+            ok = false;
+            result = `DENIED by user: ${def.name} was not approved`;
+          }
+        } else {
+          ok = false;
+          result = `DENIED: ${def.name} needs approval — re-run in a terminal or with --permission-mode bypass`;
+        }
+      }
+      options.onToolEvent?.({ type: "tool.result", name: def.name, ok, preview: result.slice(0, 160), permission: permissionEvent });
+      if (ok) {
+        toolMessages.push({ role: "tool", tool_call_id: call.id, content: result });
+      } else {
+        toolMessages.push({ role: "tool", tool_call_id: call.id, content: result });
+      }
     }
     messages.push({
       role: "assistant",
@@ -197,3 +236,5 @@ export async function resumeSession(
 
 export { sessionStore } from "./session.js";
 export { runRepl } from "./repl.js";
+export { permissionEngine, PermissionEngine } from "./permissions.js";
+export type { PermissionMode, PermissionRule, PermissionDecision } from "@riox/protocol";

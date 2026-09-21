@@ -27,3 +27,14 @@ export interface TokenUsage {
   completionTokens: number;
   totalTokens: number;
 }
+
+export type PermissionDecision = "allow" | "deny" | "ask";
+
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass";
+
+export interface PermissionRule {
+  tool: string;
+  pattern?: string;
+  decision: PermissionDecision;
+  source: "default" | "user" | "flag";
+}

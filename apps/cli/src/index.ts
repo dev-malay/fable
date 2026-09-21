@@ -1,6 +1,15 @@
 #!/usr/bin/env bun
-import { DEFAULT_MAX_TURNS, ENGINE, resolveModel, runPrompt, runRepl } from "@riox/agent";
+import {
+  DEFAULT_MAX_TURNS,
+  ENGINE,
+  resolveModel,
+  runPrompt,
+  runRepl,
+  permissionEngine,
+  PermissionMode,
+} from "@riox/agent";
 import type { TokenUsage, ToolEvent } from "@riox/protocol";
+import { handlePermissionPrompt, isInteractive } from "./permissions.js";
 
 const VERSION = "0.1.0";
 const SERVER_URL = "http://localhost:3101";
@@ -13,7 +22,7 @@ interface ToolTrace {
   preview: string;
 }
 
-function isInteractive(): boolean {
+function cliIsInteractive(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
 
@@ -34,7 +43,10 @@ Options:
   --model <id>                    Model override (default: RIOX_MODEL or built-in)
   --output-format <text|json>     Output shape for -p (default: text)
   --max-turns <n>                 Max tool turns per run (default ${DEFAULT_MAX_TURNS})
-  --dangerously-skip-permissions  Approve all tools without asking
+  --permission-mode <mode>        Permission mode: default, acceptEdits, plan, bypass (default: default)
+  --allow-tool <tool[@pattern]>   Allow a tool (optionally with glob pattern for Bash)
+  --deny-tool <tool[@pattern]>    Deny a tool (optionally with glob pattern for Bash)
+  --dangerously-skip-permissions  Approve all tools without asking (alias for --permission-mode bypass)
 
 Examples:
   riox
@@ -44,7 +56,11 @@ Examples:
   riox -p "hello riox"
   riox -p "list src files" --max-turns 5
   riox -p "hi" --output-format json
-  riox --health`);
+  riox --health
+  riox -p "edit file" --permission-mode acceptEdits
+  riox -p "run tests" --allow-tool "Bash@npm test"
+  riox -p "clean" --deny-tool "Bash@rm -rf *"
+  riox --permission-mode plan`);
 }
 
 async function cmdHealth(): Promise<void> {
@@ -61,9 +77,11 @@ async function cmdHealth(): Promise<void> {
 
 function showToolEvent(event: ToolEvent): void {
   if (event.type === "tool.start") {
-    process.stderr.write(`● ${event.name} ${event.summary}\n`);
+    const perm = event.permission ? ` [${event.permission}]` : "";
+    process.stderr.write(`● ${event.name}${perm} ${event.summary}\n`);
   } else {
-    process.stderr.write(`  ${event.ok ? "→ ok" : "→ FAILED"} ${event.preview.split("\n")[0] ?? ""}\n`);
+    const prefix = event.ok ? "\x1b[32m  → ok\x1b[0m" : "\x1b[31m  → FAILED\x1b[0m";
+    process.stderr.write(`${prefix} \x1b[90m${event.preview.split("\n")[0] ?? ""}\x1b[0m\n`);
   }
 }
 
@@ -73,13 +91,33 @@ async function cmdPrint(
   format: OutputFormat,
   maxTurns: number,
   skipPermissions: boolean,
+  permissionMode: PermissionMode,
+  allowTools: Array<{ tool: string; pattern?: string }>,
+  denyTools: Array<{ tool: string; pattern?: string }>,
 ): Promise<void> {
+  await permissionEngine.load();
+  if (permissionMode) permissionEngine.setMode(permissionMode);
+  for (const rule of allowTools) {
+    await permissionEngine.addRule({ tool: rule.tool, pattern: rule.pattern, decision: "allow" });
+  }
+  for (const rule of denyTools) {
+    await permissionEngine.addRule({ tool: rule.tool, pattern: rule.pattern, decision: "deny" });
+  }
+
+  const permissionPrompt = cliIsInteractive() && !skipPermissions
+    ? async (tool: string, summary: string, input: Record<string, unknown>) => {
+        return handlePermissionPrompt(tool, summary, input);
+      }
+    : undefined;
+
   if (format === "text") {
     for await (const delta of runPrompt(prompt, {
       model,
       maxTurns,
       skipPermissions,
+      permissionMode,
       onToolEvent: showToolEvent,
+      onPermissionPrompt: permissionPrompt,
     })) {
       process.stdout.write(delta);
     }
@@ -93,6 +131,7 @@ async function cmdPrint(
     model,
     maxTurns,
     skipPermissions,
+    permissionMode,
     onUsage: (u) => {
       usage = u;
     },
@@ -101,6 +140,7 @@ async function cmdPrint(
         tools.push({ name: event.name, ok: event.ok, preview: event.preview });
       }
     },
+    onPermissionPrompt: permissionPrompt,
   })) {
     content += delta;
   }
@@ -114,6 +154,12 @@ function parseMaxTurns(value: string | undefined): number {
   return n;
 }
 
+function parseToolSpec(spec: string): { tool: string; pattern?: string } {
+  const atIndex = spec.indexOf("@");
+  if (atIndex === -1) return { tool: spec };
+  return { tool: spec.slice(0, atIndex), pattern: spec.slice(atIndex + 1) };
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const head = args[0];
@@ -125,6 +171,9 @@ async function main(): Promise<void> {
   let shouldResume = false;
   let shouldContinue = false;
   let format: OutputFormat = "text";
+  let permissionMode: PermissionMode = "default";
+  const allowTools: Array<{ tool: string; pattern?: string }> = [];
+  const denyTools: Array<{ tool: string; pattern?: string }> = [];
 
   const rest = args.slice(1);
   for (let i = 0; i < rest.length; i++) {
@@ -144,8 +193,27 @@ async function main(): Promise<void> {
     } else if (arg === "--max-turns") {
       maxTurns = parseMaxTurns(rest[i + 1]);
       i++;
+    } else if (arg === "--permission-mode") {
+      const value = rest[i + 1];
+      if (value === undefined || value === "") throw new Error("--permission-mode needs a value");
+      if (!["default", "acceptEdits", "plan", "bypass"].includes(value)) {
+        throw new Error('--permission-mode must be one of: default, acceptEdits, plan, bypass');
+      }
+      permissionMode = value as PermissionMode;
+      i++;
+    } else if (arg === "--allow-tool") {
+      const value = rest[i + 1];
+      if (value === undefined || value === "") throw new Error("--allow-tool needs a value");
+      allowTools.push(parseToolSpec(value));
+      i++;
+    } else if (arg === "--deny-tool") {
+      const value = rest[i + 1];
+      if (value === undefined || value === "") throw new Error("--deny-tool needs a value");
+      denyTools.push(parseToolSpec(value));
+      i++;
     } else if (arg === "--dangerously-skip-permissions") {
       skipPermissions = true;
+      permissionMode = "bypass";
     } else if (arg === "--session-id") {
       const value = rest[i + 1];
       if (value === undefined || value === "") throw new Error("--session-id needs a value");
@@ -155,7 +223,7 @@ async function main(): Promise<void> {
   }
 
   if (head === undefined) {
-    if (!isInteractive()) {
+    if (!cliIsInteractive()) {
       throw new Error("interactive REPL requires a TTY — use -p/--print for non-interactive use");
     }
     await runRepl({ model, maxTurns, skipPermissions, sessionId, resume: shouldResume });
@@ -176,7 +244,7 @@ async function main(): Promise<void> {
   }
   if (head === "--continue") {
     shouldContinue = true;
-    if (!isInteractive()) {
+    if (!cliIsInteractive()) {
       throw new Error("--continue requires a TTY");
     }
     await runRepl({ model, maxTurns, skipPermissions, resume: true });
@@ -184,7 +252,7 @@ async function main(): Promise<void> {
   }
   if (head === "--resume") {
     shouldResume = true;
-    if (!isInteractive()) {
+    if (!cliIsInteractive()) {
       throw new Error("--resume requires a TTY");
     }
     const resumeId = args[1] && !args[1].startsWith("-") ? args[1] : undefined;
@@ -202,7 +270,7 @@ async function main(): Promise<void> {
         promptParts.push(arg);
       }
     }
-    await cmdPrint(promptParts.join(" "), model, format, maxTurns, skipPermissions);
+    await cmdPrint(promptParts.join(" "), model, format, maxTurns, skipPermissions, permissionMode, allowTools, denyTools);
     return;
   }
   throw new Error(`unknown command "${head}" — see riox --help`);
