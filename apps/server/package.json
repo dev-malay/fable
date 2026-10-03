@@ -4,15 +4,15 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch src/index.ts",
+    "dev": "bun --env-file=../../.env --watch src/index.ts",
     "build": "bun build src/index.ts --outfile dist/index.js --target bun",
-    "start": "bun dist/index.js",
+    "start": "bun --env-file=../../.env dist/index.js",
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@riox/agent": "*",
-    "@riox/protocol": "*"
+    "@fable/agent": "*",
+    "@fable/protocol": "*"
   },
   "devDependencies": {
     "@repo/eslint-config": "*",

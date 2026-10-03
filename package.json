@@ -1,5 +1,5 @@
 {
-  "name": "riox",
+  "name": "fable",
   "private": true,
   "scripts": {
     "build": "turbo run build",

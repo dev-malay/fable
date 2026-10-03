@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { Session, TokenUsage, ToolEvent, ChatMessage, PermissionDecision, PermissionRule, PermissionMode } from "@riox/protocol";
+import type { Session, TokenUsage, ToolEvent, ChatMessage, PermissionDecision, PermissionRule, PermissionMode } from "@fable/protocol";
 import { executeTool, safeSummarize, TOOL_MAP, toOpenAITools } from "./tools/registry.js";
 import type { ToolContext, ToolInput } from "./tools/types.js";
 import { CODING_SYSTEM_PROMPT } from "./repl.js";
@@ -9,7 +9,7 @@ import { permissionEngine, PermissionEngine } from "./permissions.js";
 export const ENGINE = "openrouter" as const;
 export const VERSION = "0.1.0";
 export const DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
-export const DEFAULT_MAX_TURNS = 10;
+export const DEFAULT_MAX_TURNS = 15;
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 const MAX_TOKENS = 2048;
@@ -17,7 +17,7 @@ const SYSTEM_PROMPT = CODING_SYSTEM_PROMPT;
 
 export function resolveModel(override?: string): string {
   if (override !== undefined && override.trim() !== "") return override.trim();
-  const fromEnv = process.env.RIOX_MODEL;
+  const fromEnv = process.env.FABLE_MODEL;
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
   return DEFAULT_MODEL;
 }
@@ -28,8 +28,10 @@ export interface RunOptions {
   cwd?: string;
   skipPermissions?: boolean;
   permissionMode?: PermissionMode;
+  history?: ChatMessage[];
   onUsage?: (usage: TokenUsage) => void;
   onToolEvent?: (event: ToolEvent) => void;
+  onRetry?: (info: { attempt: number; waitMs: number; reason: string }) => void;
   onPermissionPrompt?: (tool: string, summary: string, input: Record<string, unknown>) => Promise<"allow" | "deny">;
 }
 
@@ -89,7 +91,7 @@ function toChatMessage(role: "user" | "assistant", content: string, sessionId: s
 }
 
 export async function* runPrompt(prompt: string, options: RunOptions = {}): AsyncGenerator<string> {
-  if (prompt.trim() === "") throw new Error('empty prompt — usage: riox -p "hello"');
+  if (prompt.trim() === "") throw new Error('empty prompt — usage: fable -p "hello"');
   await permissionEngine.load();
   if (options.permissionMode) {
     permissionEngine.setMode(options.permissionMode);
@@ -97,7 +99,7 @@ export async function* runPrompt(prompt: string, options: RunOptions = {}): Asyn
   const client = new OpenAI({
     baseURL: BASE_URL,
     apiKey: readApiKey(),
-    defaultHeaders: { "HTTP-Referer": "https://riox.local", "X-Title": "riox" },
+    defaultHeaders: { "HTTP-Referer": "https://fable.local", "X-Title": "fable" },
   });
   const model = resolveModel(options.model);
   const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
@@ -108,22 +110,39 @@ export async function* runPrompt(prompt: string, options: RunOptions = {}): Asyn
   };
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: prompt },
   ];
+
+  for (const prior of options.history ?? []) {
+    if (prior.content.trim() === "") continue;
+    messages.push({ role: prior.role, content: prior.content })
+  }
+  messages.push({ role: "user", content: prompt });
+  // console.log("messages", messages)
   for (let turn = 1; ; turn += 1) {
     let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
-    try {
-      stream = await client.chat.completions.create({
-        model,
-        max_tokens: MAX_TOKENS,
-        stream: true,
-        stream_options: { include_usage: true },
-        tools: toOpenAITools(),
-        messages,
-      });
-    } catch (error) {
-      throw new Error(describeError(error));
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        stream = await client.chat.completions.create({
+          model,
+          max_tokens: MAX_TOKENS,
+          stream: true,
+          stream_options: { include_usage: true },
+          tools: toOpenAITools(),
+          messages,
+        });
+        break;
+      } catch (error) {
+        const status = (error as { status?: unknown }).status;
+        if (status === 429 && attempt < 4) {
+          const waitMs = attempt * 4000;
+          options.onRetry?.({ attempt, waitMs, reason: "rate limited" });
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        throw new Error(describeError(error));
+      }
     }
+    // console.log("stream", stream)
     const calls = new Map<number, PendingCall>();
     let assistantText = "";
     try {
@@ -237,4 +256,4 @@ export async function resumeSession(
 export { sessionStore } from "./session.js";
 export { runRepl } from "./repl.js";
 export { permissionEngine, PermissionEngine } from "./permissions.js";
-export type { PermissionMode, PermissionRule, PermissionDecision } from "@riox/protocol";
+export type { PermissionMode, PermissionRule, PermissionDecision } from "@fable/protocol";
