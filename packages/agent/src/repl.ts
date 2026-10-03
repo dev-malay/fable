@@ -6,10 +6,11 @@ import {
   resolveModel,
   sessionStore,
   resumeSession,
+  permissionEngine,
 } from "./index.js";
-import type { TokenUsage, ToolEvent, Session, ChatMessage } from "@riox/protocol";
+import type { TokenUsage, ToolEvent, Session, ChatMessage, PermissionMode } from "@fable/protocol";
 
-export const CODING_SYSTEM_PROMPT = `You are riox, a coding agent that works directly in this repository.
+export const CODING_SYSTEM_PROMPT = `You are fable, a coding agent that works directly in this repository.
 
 CORE WORKFLOW — follow for EVERY task:
 1. EXPLORE first. Use Read/Glob/Grep to understand the codebase before editing.
@@ -26,7 +27,7 @@ RULES:
 - Use Bash to run commands, not to edit files.
 - TodoWrite is your memory — update it aggressively.`;
 
-const PROMPT = "\x1b[96mriox>\x1b[0m ";
+const PROMPT = "\x1b[96mfable>\x1b[0m ";
 const CONTINUATION = "\x1b[90m...\x1b[0m ";
 
 type SlashHandler = (arg: string, ctx: ReplContext) => Promise<void>;
@@ -45,7 +46,7 @@ interface ReplContext {
 
 function printBanner(): void {
   console.log(`
-\x1b[38;2;100;200;255mriox \x1b[90mv0.1.0\x1b[0m
+\x1b[38;2;100;200;255mfable \x1b[90mv0.1.0\x1b[0m
 \x1b[90m────────────────────────────────────────\x1b[0m
   Type \x1b[1m/help\x1b[0m for commands  |  Ctrl+C to interrupt  |  Ctrl+D to exit
 `);
@@ -61,7 +62,7 @@ Commands:
   /max-turns <n>  Set max tool turns (default 10)
   /skip-perms     Toggle --dangerously-skip-permissions
   /status         Show session info
-  /exit           Exit riox
+  /exit           Exit fable
   /quit           Same as /exit
 `);
 }
@@ -120,12 +121,10 @@ async function handleSlash(line: string, ctx: ReplContext): Promise<boolean> {
       console.log(`Messages: ${ctx.messages.length}`);
     },
     exit: async () => {
-      console.log("bye");
-      process.exit(0);
+      ctx.rl.close();
     },
     quit: async () => {
-      console.log("bye");
-      process.exit(0);
+      ctx.rl.close();
     },
   };
   const handler = handlers[cmd] ?? handlers.help;
@@ -167,14 +166,19 @@ export async function runRepl(options: {
   model?: string;
   maxTurns?: number;
   skipPermissions?: boolean;
+  permissionMode?: PermissionMode;
   cwd?: string;
   sessionId?: string;
   resume?: boolean;
+  onPermissionPrompt?: (tool: string, summary: string, input: Record<string, unknown>) => Promise<"allow" | "deny">;
 }): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
   const model = resolveModel(options.model);
   const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
   const skipPermissions = options.skipPermissions ?? false;
+  const permissionMode = options.skipPermissions ? "bypass" : (options.permissionMode ?? "default");
+  await permissionEngine.load();
+  permissionEngine.setMode(permissionMode);
 
   let session: Session;
   let messages: ChatMessage[] = [];
@@ -251,6 +255,7 @@ export async function runRepl(options: {
   console.log(`\x1b[90mModel:\x1b[0m ${model}`);
   console.log(`\x1b[90mMax turns:\x1b[0m ${maxTurns}`);
   console.log(`\x1b[90mSkip perms:\x1b[0m ${skipPermissions}`);
+  console.log(`\x1b[90mPerm mode:\x1b[0m ${permissionMode}`);
   console.log(`\x1b[90mSession:\x1b[0m ${session.id.slice(0, 8)}...`);
   if (messages.length > 0) 
     {
@@ -268,8 +273,11 @@ export async function runRepl(options: {
     ctx.tools.push(event)
   };
 
+  let closing = false;
+
   return new Promise((resolve) => {
     const readLine = (continuation = false): void => {
+      if (closing) return;
       rl.setPrompt(continuation ? CONTINUATION : PROMPT);
       rl.prompt();
     };
@@ -283,11 +291,12 @@ export async function runRepl(options: {
       if (trimmed.startsWith("/")) {
         const handled = await handleSlash(trimmed, ctx);
         if (handled) {
-          readLine();
+          if (!closing) readLine();
           return;
         }
       }
       ctx.history.push(trimmed);
+      const priorHistory = [...ctx.messages];
       ctx.messages.push(toChatMessage("user", trimmed, ctx.session.id));
       try {
         let assistantText = "";
@@ -295,8 +304,14 @@ export async function runRepl(options: {
           model: ctx.model,
           maxTurns: ctx.maxTurns,
           skipPermissions: ctx.skipPermissions,
+          permissionMode,
+          history: priorHistory,
           cwd: ctx.cwd,
           onToolEvent,
+          onRetry: ({ attempt, waitMs }) => {
+            console.log(`\x1b[33mfable\x1b[0m \x1b[90mrate limited — retry ${attempt} in ${Math.round(waitMs / 1000)}s\x1b[0m`);
+          },
+          onPermissionPrompt: options.onPermissionPrompt,
         })) {
           assistantText += delta;
           process.stdout.write(delta);
@@ -309,18 +324,18 @@ export async function runRepl(options: {
       } catch (error) {
         const msg = error instanceof Error ? error.message : "unknown error";
         console.log(`\x1b[31mError: ${msg}\x1b[0m`);
+        await saveSession(ctx);
       }
-      readLine();
+      if (!closing) readLine();
     });
 
     rl.on("SIGINT", () => {
+      if (closing) return;
       rl.close();
-      console.log("");
-      console.log("\x1b[90m[interrupted]\x1b[0m");
-      readLine();
     });
 
     rl.on("close", async () => {
+      closing = true;
       await saveSession(ctx);
       console.log("bye");
       resolve();
