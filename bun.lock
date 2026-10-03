@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "riox",
+      "name": "fable",
       "dependencies": {
         "minimatch": "^10.2.6",
       },
@@ -20,11 +20,11 @@
       "name": "cli",
       "version": "0.1.0",
       "bin": {
-        "riox": "./dist/index.js",
+        "fable": "./dist/index.js",
       },
       "dependencies": {
-        "@riox/agent": "*",
-        "@riox/protocol": "*",
+        "@fable/agent": "*",
+        "@fable/protocol": "*",
       },
       "devDependencies": {
         "@repo/eslint-config": "*",
@@ -57,8 +57,8 @@
       "name": "server",
       "version": "0.1.0",
       "dependencies": {
-        "@riox/agent": "*",
-        "@riox/protocol": "*",
+        "@fable/agent": "*",
+        "@fable/protocol": "*",
       },
       "devDependencies": {
         "@repo/eslint-config": "*",
@@ -69,10 +69,10 @@
       },
     },
     "packages/agent": {
-      "name": "@riox/agent",
+      "name": "@fable/agent",
       "version": "0.1.0",
       "dependencies": {
-        "@riox/protocol": "*",
+        "@fable/protocol": "*",
         "minimatch": "^10.0.0",
         "openai": "^5.0.0",
       },
@@ -103,7 +103,7 @@
       },
     },
     "packages/protocol": {
-      "name": "@riox/protocol",
+      "name": "@fable/protocol",
       "version": "0.1.0",
       "devDependencies": {
         "@repo/eslint-config": "*",
@@ -208,6 +208,10 @@
     "@eslint/object-schema": ["@eslint/object-schema@3.0.5", "", {}, "sha512-vqTaUEgxzm+YDSdElad6PiRoX4t8VGDjCtt05zn4nU810UIx/uNEV7/lZJ6KwFThKZOzOxzXy48da+No7HZaMw=="],
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.7.3", "", { "dependencies": { "@eslint/core": "^1.2.1", "levn": "^0.4.1" } }, "sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q=="],
+
+    "@fable/agent": ["@fable/agent@workspace:packages/agent"],
+
+    "@fable/protocol": ["@fable/protocol@workspace:packages/protocol"],
 
     "@humanfs/core": ["@humanfs/core@0.19.2", "", { "dependencies": { "@humanfs/types": "^0.15.0" } }, "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA=="],
 
@@ -314,10 +318,6 @@
     "@repo/typescript-config": ["@repo/typescript-config@workspace:packages/typescript-config"],
 
     "@repo/ui": ["@repo/ui@workspace:packages/ui"],
-
-    "@riox/agent": ["@riox/agent@workspace:packages/agent"],
-
-    "@riox/protocol": ["@riox/protocol@workspace:packages/protocol"],
 
     "@swc/helpers": ["@swc/helpers@0.5.23", "", { "dependencies": { "tslib": "^2.8.0" } }, "sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw=="],
 
@@ -508,8 +508,6 @@
     "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
 
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
-
-    "jiti": ["jiti@2.7.0", "", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ=="],
 
     "js-tokens": ["js-tokens@10.0.0", "", {}, "sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q=="],
 

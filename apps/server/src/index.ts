@@ -1,10 +1,10 @@
 import { type ServerWebSocket, serve } from "bun";
-import { createSession, ENGINE, resolveModel, runPrompt, VERSION } from "@riox/agent";
+import { createSession, ENGINE, resolveModel, runPrompt, VERSION } from "@fable/agent";
 import {parseClientEvent,
   serializeServerEvent,
   type ServerEvent,
   type Session
-} from "@riox/protocol";
+} from "@fable/protocol";
 
 const PORT = 3101;
 
@@ -79,7 +79,7 @@ serve({
     async message(ws, raw) {
       const event = parseClientEvent(raw);
       if (event === null) {
-        send(ws, { type: "error", message: "invalid event (see @riox/protocol)" });
+        send(ws, { type: "error", message: "invalid event (see @fable/protocol)" });
         return;
       }
       try {
@@ -101,7 +101,7 @@ serve({
 
 
 
-console.log(`riox server listening on http://localhost:${PORT} (engine=${ENGINE})`);
+console.log(`fable server listening on http://localhost:${PORT} (engine=${ENGINE})`);
 
 
 

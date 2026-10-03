@@ -12,7 +12,7 @@ export interface PermissionRule {
   source: "default" | "user" | "flag";
 }
 
-const PERMISSIONS_DIR = join(homedir(), ".riox");
+const PERMISSIONS_DIR = join(homedir(), ".fable");
 const PERMISSIONS_FILE = join(PERMISSIONS_DIR, "permissions.json");
 
 interface StoredPermissions {

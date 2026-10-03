@@ -1,10 +1,10 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Session, ChatMessage, ToolEvent } from "@riox/protocol";
+import type { Session, ChatMessage, ToolEvent } from "@fable/protocol";
 
 
-const SESSIONS_DIR = join(homedir(), ".riox", "sessions");
+const SESSIONS_DIR = join(homedir(), ".fable", "sessions");
 
 interface PersistedSession {
   meta: Session & {

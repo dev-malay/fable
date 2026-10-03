@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { permissionEngine } from "@riox/agent";
+import { permissionEngine } from "@fable/agent";
 
 export type Approval = "allow" | "deny" | "always" | "never";
 

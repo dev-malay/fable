@@ -20,7 +20,7 @@ A terminal coding agent built with Bun, TypeScript, and OpenRouter. Uses a strea
 flowchart LR
     subgraph CLI
         REPL["Interactive REPL<br/>readline + slash cmds"]
-        PRINT["One-shot<br/>riox -p"]
+        PRINT["One-shot<br/>fable -p"]
     end
 
     subgraph Agent
@@ -42,8 +42,8 @@ flowchart LR
     end
 
     subgraph Persistence
-        SES[("~/.riox/sessions<br/>JSONL per session")]
-        CFG[("~/.riox/permissions.json<br/>user rules")]
+        SES[("~/.fable/sessions<br/>JSONL per session")]
+        CFG[("~/.fable/permissions.json<br/>user rules")]
     end
 
     REPL --> LOOP
@@ -68,15 +68,15 @@ flowchart LR
 
 ### Core Agent Loop
 - **Streaming Tool-Call Loop** — `runPrompt()` streams chat completions from OpenRouter, accumulates `tool_calls`, executes them via the tool registry, and feeds `tool` messages back until the model answers directly (default `maxTurns: 10`, `MAX_TOKENS: 2048`).
-- **REPL + One-Shot** — Interactive `readline` REPL with slash commands and per-turn session save, or `riox -p "prompt"` for single-shot stdout/JSON execution.
-- **Sessions** — Every run persists to `~/.riox/sessions/<id>.jsonl`. Resume with `--continue` / `--resume [id]`, list/fork/delete via the session store.
-- **Model Flexibility** — Any OpenRouter model id via `--model` or `RIOX_MODEL` (default `nvidia/nemotron-3-ultra-550b-a55b:free`).
+- **REPL + One-Shot** — Interactive `readline` REPL with slash commands and per-turn session save, or `fable -p "prompt"` for single-shot stdout/JSON execution.
+- **Sessions** — Every run persists to `~/.fable/sessions/<id>.jsonl`. Resume with `--continue` / `--resume [id]`, list/fork/delete via the session store.
+- **Model Flexibility** — Any OpenRouter model id via `--model` or `FABLE_MODEL` (default `nvidia/nemotron-3-ultra-550b-a55b:free`).
 
 ### Permissions
 - **Three Decisions** — Every tool call evaluates to `allow`, `ask` (interactive `y/n/always/never`), or `deny`. Read-only tools (`Read`, `Glob`, `Grep`, `WebFetch`, `TodoWrite`) auto-allow; `Write`, `Edit`, and mutating `Bash` ask by default.
 - **Deny-by-Default Destructive Shell** — `rm*`, `mv*`, `chmod*`, `chown*`, `sudo*`, and pipe-to-shell (`curl|sh`) are denied even in ask mode.
 - **Four Modes** — `default`, `acceptEdits` (auto-allow Write/Edit), `plan` (deny Write/Edit/Bash — research only), `bypass` (allow all, same as `--dangerously-skip-permissions`).
-- **Persistent Rules** — `always`/`never` answers are stored in `~/.riox/permissions.json`. CLI flags `--allow-tool tool[@pattern]` / `--deny-tool tool[@pattern]` add per-run rules.
+- **Persistent Rules** — `always`/`never` answers are stored in `~/.fable/permissions.json`. CLI flags `--allow-tool tool[@pattern]` / `--deny-tool tool[@pattern]` add per-run rules.
 - **Cwd-Jailed Tools** — File tools resolve inside the working directory; outputs are capped (30k) so runaway commands can't flood the context.
 
 ### Tools
@@ -98,13 +98,13 @@ flowchart LR
 ### CLI
 | Invocation | Description |
 |---|---|
-| `riox` | Interactive REPL (requires TTY) |
-| `riox --continue` | REPL resumed from the latest session |
-| `riox --resume [id]` | REPL resumed from session `id` (or latest if omitted) |
-| `riox -p, --print <prompt>` | One-shot run, streams text to stdout |
-| `riox --health` | Check the local server's `/health` |
-| `riox --version, -v` | Print version + engine |
-| `riox --help, -h` | Print help |
+| `fable` | Interactive REPL (requires TTY) |
+| `fable --continue` | REPL resumed from the latest session |
+| `fable --resume [id]` | REPL resumed from session `id` (or latest if omitted) |
+| `fable -p, --print <prompt>` | One-shot run, streams text to stdout |
+| `fable --health` | Check the local server's `/health` |
+| `fable --version, -v` | Print version + engine |
+| `fable --help, -h` | Print help |
 
 ---
 
@@ -129,26 +129,25 @@ cp .env.example .env
 Required root `.env` variables:
 ```
 OPENROUTER_API_KEY=
-RIOX_MODEL=
+FABLE_MODEL=
 ```
 
-`RIOX_MODEL` is optional — any OpenRouter model id, defaults to `nvidia/nemotron-3-ultra-550b-a55b:free`. Flag `--model` overrides both.
+`FABLE_MODEL` is optional — any OpenRouter model id, defaults to `nvidia/nemotron-3-ultra-550b-a55b:free`. Flag `--model` overrides both.
 
 ### Start the REPL
 
 ```bash
-bun --filter cli dev
-# or
-riox
+cd apps/cli
+bun start
 ```
 
-Opens the interactive agent at your shell. Slash commands: `/help /clear /compact /model /max-turns /skip-perms /status /exit`.
+Opens the interactive agent at your shell and loads configuration from the repository-root `.env`. Slash commands: `/help /clear /compact /model /max-turns /skip-perms /status /exit`.
 
 ### One-Shot Prompting
 
 ```bash
-riox -p "explain what this repo does"
-riox -p "find the auth middleware" --output-format json --max-turns 5
+fable -p "explain what this repo does"
+fable -p "find the auth middleware" --output-format json --max-turns 5
 ```
 
 Streams text to stdout, or emits `{content, model, usage, tools}` with `--output-format json`.
@@ -174,9 +173,9 @@ Opens the Next.js docs starter at `http://localhost:3001`. (Template stub — re
 ## Project Structure
 
 ```
-riox/
+fable/
 ├── apps/
-│   ├── cli/                    # `riox` binary (REPL + one-shot + flags)
+│   ├── cli/                    # `fable` binary (REPL + one-shot + flags)
 │   │   └── src/
 │   │       ├── index.ts        # Arg parsing, --print/--resume/--health dispatch
 │   │       └── permissions.ts  # y/n/always/never approval prompt
@@ -189,7 +188,7 @@ riox/
 │   │   └── src/
 │   │       ├── index.ts        # runPrompt(), OpenRouter client, model resolve
 │   │       ├── repl.ts         # Interactive REPL + slash commands
-│   │       ├── session.ts      # ~/.riox/sessions/*.jsonl store
+│   │       ├── session.ts      # ~/.fable/sessions/*.jsonl store
 │   │       ├── permissions.ts  # PermissionEngine + default rules + modes
 │   │       └── tools/
 │   │           ├── registry.ts # TOOLS, TOOL_MAP, OpenAI function schemas
@@ -206,7 +205,7 @@ riox/
 │   ├── ui/                     # Shared React stub library (Button, Card, Code)
 │   ├── eslint-config/          # Shared eslint configs
 │   └── typescript-config/      # Shared tsconfigs
-├── .env.example                # OPENROUTER_API_KEY, RIOX_MODEL
+├── .env.example                # OPENROUTER_API_KEY, FABLE_MODEL
 └── turbo.json                  # build/dev/lint/check-types pipelines
 ```
 
@@ -214,12 +213,12 @@ riox/
 
 ## CLI Documentation
 
-### `riox -p, --print <prompt>`
+### `fable -p, --print <prompt>`
 
 One-shot execution. Streams the answer text to stdout.
 
 ```bash
-riox -p "list all API routes in apps/server" --model "anthropic/claude-sonnet-4"
+fable -p "list all API routes in apps/server" --model "anthropic/claude-sonnet-4"
 ```
 
 **Response (`--output-format json`)**
@@ -234,19 +233,19 @@ riox -p "list all API routes in apps/server" --model "anthropic/claude-sonnet-4"
 
 Useful flags: `--max-turns <n>` (default 10), `--permission-mode default|acceptEdits|plan|bypass`, `--allow-tool` / `--deny-tool tool[@pattern]`, `--session-id <id>`.
 
-### `riox --resume [id]`
+### `fable --resume [id]`
 
 ```bash
-riox --resume
-riox --resume 7f3a2c1e-85b4-4e3f-a631-f542289c4b7b
+fable --resume
+fable --resume 7f3a2c1e-85b4-4e3f-a631-f542289c4b7b
 ```
 
 Reopens the REPL with prior session history loaded. `--continue` is shorthand for the latest session.
 
-### `riox --health`
+### `fable --health`
 
 ```bash
-riox --health
+fable --health
 ```
 
 **Response (200 — Server running)**
@@ -294,7 +293,7 @@ prompt → model (stream) → tool_calls?
 
 - **Text deltas** stream to the caller as they arrive
 - **Tool outputs** re-enter context as `tool` messages, so the model can iterate (read → edit → verify)
-- **Permissions** persist per session; `always`/`never` answers are remembered in `~/.riox/permissions.json`
+- **Permissions** persist per session; `always`/`never` answers are remembered in `~/.fable/permissions.json`
 
 ---
 
