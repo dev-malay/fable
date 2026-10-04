@@ -7,8 +7,8 @@ import {
   runRepl,
   permissionEngine,
   PermissionMode,
-} from "@riox/agent";
-import type { TokenUsage, ToolEvent } from "@riox/protocol";
+} from "@fable/agent";
+import type { TokenUsage, ToolEvent } from "@fable/protocol";
 import { handlePermissionPrompt, isInteractive } from "./permissions.js";
 
 const VERSION = "0.1.0";
@@ -26,21 +26,22 @@ function cliIsInteractive(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
 
+
 function printHelp(): void {
-  console.log(`riox ${VERSION} - coding agent
+  console.log(`fable ${VERSION} - coding agent
 
 Usage:
-  riox                       Start interactive REPL (requires TTY)
-  riox --continue            Resume the most recent session
-  riox --resume [id]         Resume a specific session (or pick from list)
-  riox --session-id <id>     Start new session with specific ID
-  riox --version             Print version
-  riox --help                Show this help
-  riox --health              Check the local server (/health)
-  riox -p, --print <prompt>  Run one prompt through the engine and exit
+  fable                       Start interactive REPL (requires TTY)
+  fable --continue            Resume the most recent session
+  fable --resume [id]         Resume a specific session (or pick from list)
+  fable --session-id <id>     Start new session with specific ID
+  fable --version             Print version
+  fable --help                Show this help
+  fable --health              Check the local server (/health)
+  fable -p, --print <prompt>  Run one prompt through the engine and exit
 
 Options:
-  --model <id>                    Model override (default: RIOX_MODEL or built-in)
+  --model <id>                    Model override (default: FABLE_MODEL or built-in)
   --output-format <text|json>     Output shape for -p (default: text)
   --max-turns <n>                 Max tool turns per run (default ${DEFAULT_MAX_TURNS})
   --permission-mode <mode>        Permission mode: default, acceptEdits, plan, bypass (default: default)
@@ -49,18 +50,18 @@ Options:
   --dangerously-skip-permissions  Approve all tools without asking (alias for --permission-mode bypass)
 
 Examples:
-  riox
-  riox --continue
-  riox --resume
-  riox --resume abc123
-  riox -p "hello riox"
-  riox -p "list src files" --max-turns 5
-  riox -p "hi" --output-format json
-  riox --health
-  riox -p "edit file" --permission-mode acceptEdits
-  riox -p "run tests" --allow-tool "Bash@npm test"
-  riox -p "clean" --deny-tool "Bash@rm -rf *"
-  riox --permission-mode plan`);
+  fable
+  fable --continue
+  fable --resume
+  fable --resume abc123
+  fable -p "hello fable"
+  fable -p "list src files" --max-turns 5
+  fable -p "hi" --output-format json
+  fable --health
+  fable -p "edit file" --permission-mode acceptEdits
+  fable -p "run tests" --allow-tool "Bash@npm test"
+  fable -p "clean" --deny-tool "Bash@rm -rf *"
+  fable --permission-mode plan`);
 }
 
 async function cmdHealth(): Promise<void> {
@@ -222,11 +223,27 @@ async function main(): Promise<void> {
     }
   }
 
-  if (head === undefined) {
+  const permissionPrompt = cliIsInteractive()
+  ? async (tool: string, summary: string, input: Record<string, unknown>) => {
+      await permissionEngine.load();
+      return handlePermissionPrompt(tool, summary, input);
+    }
+  : undefined;
+
+if (head === undefined) {
     if (!cliIsInteractive()) {
       throw new Error("interactive REPL requires a TTY — use -p/--print for non-interactive use");
     }
-    await runRepl({ model, maxTurns, skipPermissions, sessionId, resume: shouldResume });
+    await permissionEngine.load();
+    await runRepl({
+      model,
+      maxTurns,
+      skipPermissions,
+      permissionMode,
+      sessionId,
+      resume: shouldResume,
+      onPermissionPrompt: permissionPrompt,
+    });
     return;
   }
 
@@ -235,7 +252,7 @@ async function main(): Promise<void> {
     return;
   }
   if (head === "--version" || head === "-v") {
-    console.log(`${VERSION} (riox, engine=${ENGINE})`);
+    console.log(`${VERSION} (fable, engine=${ENGINE})`);
     return;
   }
   if (head === "--health") {
@@ -247,7 +264,15 @@ async function main(): Promise<void> {
     if (!cliIsInteractive()) {
       throw new Error("--continue requires a TTY");
     }
-    await runRepl({ model, maxTurns, skipPermissions, resume: true });
+    await permissionEngine.load();
+    await runRepl({
+      model,
+      maxTurns,
+      skipPermissions,
+      permissionMode,
+      resume: true,
+      onPermissionPrompt: permissionPrompt,
+    });
     return;
   }
   if (head === "--resume") {
@@ -256,11 +281,20 @@ async function main(): Promise<void> {
       throw new Error("--resume requires a TTY");
     }
     const resumeId = args[1] && !args[1].startsWith("-") ? args[1] : undefined;
-    await runRepl({ model, maxTurns, skipPermissions, sessionId: resumeId, resume: true });
+    await permissionEngine.load();
+    await runRepl({
+      model,
+      maxTurns,
+      skipPermissions,
+      permissionMode,
+      sessionId: resumeId,
+      resume: true,
+      onPermissionPrompt: permissionPrompt,
+    });
     return;
   }
   if (head === "--session-id") {
-    throw new Error("--session-id is an option, not a command. Use: riox --session-id <id>");
+    throw new Error("--session-id is an option, not a command. Use: fable --session-id <id>");
   }
   if (head === "-p" || head === "--print") {
     const promptParts: string[] = [];
@@ -273,11 +307,11 @@ async function main(): Promise<void> {
     await cmdPrint(promptParts.join(" "), model, format, maxTurns, skipPermissions, permissionMode, allowTools, denyTools);
     return;
   }
-  throw new Error(`unknown command "${head}" — see riox --help`);
+  throw new Error(`unknown command "${head}" — see fable --help`);
 }
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "unknown error";
-  console.error(`riox: ${message}`);
+  console.error(`fable: ${message}`);
   process.exit(1);
 });
