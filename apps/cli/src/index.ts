@@ -6,10 +6,13 @@ import {
   runPrompt,
   runRepl,
   permissionEngine,
+  buildContext,
+  commandHelp,
+  initContext,
   PermissionMode,
 } from "@fable/agent";
 import type { TokenUsage, ToolEvent } from "@fable/protocol";
-import { handlePermissionPrompt, isInteractive } from "./permissions.js";
+import { handlePermissionPrompt } from "./permissions.js";
 
 const VERSION = "0.1.0";
 const SERVER_URL = "http://localhost:3101";
@@ -35,10 +38,14 @@ Usage:
   fable --continue            Resume the most recent session
   fable --resume [id]         Resume a specific session (or pick from list)
   fable --session-id <id>     Start new session with specific ID
+  fable --init                Scaffold FABLE.md in the current directory
   fable --version             Print version
   fable --help                Show this help
   fable --health              Check the local server (/health)
   fable -p, --print <prompt>  Run one prompt through the engine and exit
+
+Slash commands (in the REPL):
+${commandHelp()}
 
 Options:
   --model <id>                    Model override (default: FABLE_MODEL or built-in)
@@ -86,6 +93,16 @@ function showToolEvent(event: ToolEvent): void {
   }
 }
 
+async function cmdInit(): Promise<void> {
+  const { path, created } = await initContext(process.cwd());
+  if (created) {
+    console.log(`created ${path}`);
+    console.log("Edit it to describe your build commands and conventions.");
+  } else {
+    console.log(`${path} already exists — left untouched`);
+  }
+}
+
 async function cmdPrint(
   prompt: string,
   model: string | undefined,
@@ -105,6 +122,7 @@ async function cmdPrint(
     await permissionEngine.addRule({ tool: rule.tool, pattern: rule.pattern, decision: "deny" });
   }
 
+  const extraContext = await buildContext(process.cwd());
   const permissionPrompt = cliIsInteractive() && !skipPermissions
     ? async (tool: string, summary: string, input: Record<string, unknown>) => {
         return handlePermissionPrompt(tool, summary, input);
@@ -117,6 +135,7 @@ async function cmdPrint(
       maxTurns,
       skipPermissions,
       permissionMode,
+      extraContext,
       onToolEvent: showToolEvent,
       onPermissionPrompt: permissionPrompt,
     })) {
@@ -133,6 +152,7 @@ async function cmdPrint(
     maxTurns,
     skipPermissions,
     permissionMode,
+    extraContext,
     onUsage: (u) => {
       usage = u;
     },
@@ -223,12 +243,12 @@ async function main(): Promise<void> {
     }
   }
 
-  const permissionPrompt = cliIsInteractive()
-  ? async (tool: string, summary: string, input: Record<string, unknown>) => {
+const permissionPrompt = cliIsInteractive()
+    ? async (tool: string, summary: string, input: Record<string, unknown>) => {
       await permissionEngine.load();
       return handlePermissionPrompt(tool, summary, input);
     }
-  : undefined;
+    : undefined;
 
 if (head === undefined) {
     if (!cliIsInteractive()) {
@@ -257,6 +277,10 @@ if (head === undefined) {
   }
   if (head === "--health") {
     await cmdHealth();
+    return;
+  }
+  if (head === "--init") {
+    await cmdInit();
     return;
   }
   if (head === "--continue") {
