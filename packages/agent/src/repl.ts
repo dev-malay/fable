@@ -7,7 +7,13 @@ import {
   sessionStore,
   resumeSession,
   permissionEngine,
+  buildContext,
+  loadContext,
+  loadSkills,
+  COMMAND_MAP,
+  commandHelp,
 } from "./index.js";
+import { initContext } from "./init.js";
 import type { TokenUsage, ToolEvent, Session, ChatMessage, PermissionMode } from "@fable/protocol";
 
 export const CODING_SYSTEM_PROMPT = `You are fable, a coding agent that works directly in this repository.
@@ -42,6 +48,8 @@ interface ReplContext {
   rl: Interface;
   messages: ChatMessage[];
   tools: ToolEvent[];
+  extraContext: string;
+  submit: (prompt: string) => Promise<void>;
 }
 
 function printBanner(): void {
@@ -54,16 +62,21 @@ function printBanner(): void {
 
 function printHelp(): void {
   console.log(`
-Commands:
+Session:
   /help           Show this help
   /clear          Clear screen
-  /compact        Summarize conversation and start fresh
-  /model <id>     Switch model (current: {{model}})
-  /max-turns <n>  Set max tool turns (default 10)
+  /compact        Clear conversation history
+  /model <id>     Switch model
+  /max-turns <n>  Set max tool turns
   /skip-perms     Toggle --dangerously-skip-permissions
   /status         Show session info
+  /context        Show loaded FABLE.md files and skills
+  /init           Scaffold FABLE.md
   /exit           Exit fable
   /quit           Same as /exit
+
+Workflow:
+${commandHelp()}
 `);
 }
 
@@ -81,6 +94,27 @@ async function handleSlash(line: string, ctx: ReplContext): Promise<boolean> {
       console.log(`\x1b[90mCurrent model:\x1b[0m ${ctx.model}`);
     },
     clear: async () => clearScreen(),
+    init: async () => {
+      const { path, created } = await initContext(ctx.cwd);
+      ctx.extraContext = await buildContext(ctx.cwd);
+      console.log(
+        created
+          ? `created ${path} — edit it to describe your commands`
+          : `${path} already exists — left untouched`,
+      );
+    },
+    context: async () => {
+      const entries = await loadContext(ctx.cwd);
+      const skills = await loadSkills(ctx.cwd);
+      if (entries.length === 0) console.log("No FABLE.md found. Run /init to create one.");
+      for (const e of entries) {
+        console.log(`\x1b[90m${e.source.padEnd(8)}\x1b[0m ${e.path} (${e.body.length} chars)`);
+      }
+      if (skills.length === 0) console.log("No skills found in .fable/skills/");
+      for (const s of skills) {
+        console.log(`\x1b[90mskill    \x1b[0m ${s.name}${s.description === "" ? "" : ` — ${s.description}`}`);
+      }
+    },
     compact: async () => {
       console.log("\x1b[90m[compact not yet implemented - clears local history only]\x1b[0m");
       ctx.history = [];
@@ -170,6 +204,7 @@ export async function runRepl(options: {
   cwd?: string;
   sessionId?: string;
   resume?: boolean;
+  extraContext?: string;
   onPermissionPrompt?: (tool: string, summary: string, input: Record<string, unknown>) => Promise<"allow" | "deny">;
 }): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
@@ -247,7 +282,9 @@ export async function runRepl(options: {
     history: [],
     rl,
     messages,
-    tools
+    tools,
+    extraContext: options.extraContext ?? (await buildContext(cwd)),
+    submit: async () => {},
   };
 
   printBanner();
@@ -275,6 +312,42 @@ export async function runRepl(options: {
 
   let closing = false;
 
+  const submit = async (prompt: string): Promise<void> => {
+    ctx.history.push(prompt);
+    const priorHistory = [...ctx.messages];
+    ctx.messages.push(toChatMessage("user", prompt, ctx.session.id));
+    try {
+      let assistantText = "";
+      for await (const delta of runPrompt(prompt, {
+        model: ctx.model,
+        maxTurns: ctx.maxTurns,
+        skipPermissions: ctx.skipPermissions,
+        permissionMode,
+        history: priorHistory,
+        extraContext: ctx.extraContext,
+        cwd: ctx.cwd,
+        onToolEvent,
+        onRetry: ({ attempt, waitMs }) => {
+          console.log(`\x1b[33mfable\x1b[0m \x1b[90mrate limited — retry ${attempt} in ${Math.round(waitMs / 1000)}s\x1b[0m`);
+        },
+        onPermissionPrompt: options.onPermissionPrompt,
+      })) {
+        assistantText += delta;
+        process.stdout.write(delta);
+      }
+      process.stdout.write("\n");
+      if (assistantText) {
+        ctx.messages.push(toChatMessage("assistant", assistantText, ctx.session.id));
+      }
+      await saveSession(ctx);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown error";
+      console.log(`\x1b[31mError: ${msg}\x1b[0m`);
+      await saveSession(ctx);
+    }
+  };
+  ctx.submit = submit;
+
   return new Promise((resolve) => {
     const readLine = (continuation = false): void => {
       if (closing) return;
@@ -289,43 +362,32 @@ export async function runRepl(options: {
         return;
       }
       if (trimmed.startsWith("/")) {
+        const name = (trimmed.slice(1).split(" ")[0] ?? "").toLowerCase();
+        const command = COMMAND_MAP.get(name);
+        if (command) {
+          try {
+            const result = await command.run({ cwd: ctx.cwd, arg: trimmed.slice(1 + name.length).trim(), model: ctx.model });
+            if (result.note) console.log(`\x1b[90m${result.note}\x1b[0m`);
+            if (result.shell) {
+              const { runShellCommand } = await import("./tools/exec.js");
+              const out = await runShellCommand(result.shell.command, ctx.cwd, result.shell.timeoutMs ?? 120000);
+              console.log(`\x1b[90m${out.trim().split("\n").slice(-20).join("\n")}\x1b[0m`);
+            }
+            if (result.prompt) await submit(result.prompt);
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : "unknown error";
+            console.log(`\x1b[31mError: ${msg}\x1b[0m`);
+          }
+          if (!closing) readLine();
+          return;
+        }
         const handled = await handleSlash(trimmed, ctx);
         if (handled) {
           if (!closing) readLine();
           return;
         }
       }
-      ctx.history.push(trimmed);
-      const priorHistory = [...ctx.messages];
-      ctx.messages.push(toChatMessage("user", trimmed, ctx.session.id));
-      try {
-        let assistantText = "";
-        for await (const delta of runPrompt(trimmed, {
-          model: ctx.model,
-          maxTurns: ctx.maxTurns,
-          skipPermissions: ctx.skipPermissions,
-          permissionMode,
-          history: priorHistory,
-          cwd: ctx.cwd,
-          onToolEvent,
-          onRetry: ({ attempt, waitMs }) => {
-            console.log(`\x1b[33mfable\x1b[0m \x1b[90mrate limited — retry ${attempt} in ${Math.round(waitMs / 1000)}s\x1b[0m`);
-          },
-          onPermissionPrompt: options.onPermissionPrompt,
-        })) {
-          assistantText += delta;
-          process.stdout.write(delta);
-        }
-        process.stdout.write("\n");
-        if (assistantText) {
-          ctx.messages.push(toChatMessage("assistant", assistantText, ctx.session.id));
-        }
-        await saveSession(ctx);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : "unknown error";
-        console.log(`\x1b[31mError: ${msg}\x1b[0m`);
-        await saveSession(ctx);
-      }
+      await submit(trimmed);
       if (!closing) readLine();
     });
 

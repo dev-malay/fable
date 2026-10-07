@@ -3,7 +3,11 @@ import { cap, int, str, type ToolContext, type ToolDef } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 120000;
 
-function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ code: number | null; out: string }> {
+function runShell(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<{ code: number | null; out: string }> {
   const shell = process.platform === "win32" ? "cmd" : "sh";
   const flag = process.platform === "win32" ? "/c" : "-c";
   return new Promise((resolve, reject) => {
@@ -31,9 +35,17 @@ function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ co
       clearTimeout(timer);
       const combined = stderr === "" ? stdout : `${stdout}\nSTDERR:\n${stderr}`;
       resolve({ code, out: combined });
-
-    })
+    });
   });
+}
+
+export function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<string> {
+  if (command.trim() === "") return Promise.reject(new Error("empty command"));
+  return runShell(command, cwd, timeoutMs).then(({ code, out }) => `exit=${code}\n${out}`);
 }
 
 export const bashTool: ToolDef = {
