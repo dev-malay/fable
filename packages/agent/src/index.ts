@@ -5,6 +5,8 @@ import type { ToolContext, ToolInput } from "./tools/types.js";
 import { CODING_SYSTEM_PROMPT } from "./repl.js";
 import { sessionStore } from "./session.js";
 import { permissionEngine, PermissionEngine } from "./permissions.js";
+import { formatContext, loadContext } from "./context.js";
+import { formatSkills, loadSkills } from "./skills.js";
 
 export const ENGINE = "openrouter" as const;
 export const VERSION = "0.1.0";
@@ -29,6 +31,7 @@ export interface RunOptions {
   skipPermissions?: boolean;
   permissionMode?: PermissionMode;
   history?: ChatMessage[];
+  extraContext?: string;
   onUsage?: (usage: TokenUsage) => void;
   onToolEvent?: (event: ToolEvent) => void;
   onRetry?: (info: { attempt: number; waitMs: number; reason: string }) => void;
@@ -109,7 +112,7 @@ export async function* runPrompt(prompt: string, options: RunOptions = {}): Asyn
     alwaysAllowed: new Set<string>(),
   };
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: SYSTEM_PROMPT + (options.extraContext ?? "") },
   ];
 
   for (const prior of options.history ?? []) {
@@ -253,7 +256,16 @@ export async function resumeSession(
   return { session: loaded.meta, messages: loaded.messages };
 }
 
+export async function buildContext(cwd: string): Promise<string> {
+  const [entries, skills] = await Promise.all([loadContext(cwd), loadSkills(cwd)]);
+  return formatContext(entries) + formatSkills(skills);
+}
+
 export { sessionStore } from "./session.js";
 export { runRepl } from "./repl.js";
 export { permissionEngine, PermissionEngine } from "./permissions.js";
+export { loadContext, formatContext, type LoadedContext } from "./context.js";
+export { loadSkills, getSkill, type Skill } from "./skills.js";
+export { COMMANDS, COMMAND_MAP, commandHelp, type CommandDef } from "./commands.js";
+export { initContext } from "./init.js";
 export type { PermissionMode, PermissionRule, PermissionDecision } from "@fable/protocol";
