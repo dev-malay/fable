@@ -4,7 +4,7 @@ import { int, resolveInCwd, str, type ToolDef } from "./types.js";
 
 const MAX_RESULTS = 100;
 
-function globToRegExp(pattern: string): RegExp {
+export function globToRegExp(pattern: string): RegExp {
   const fixed = pattern.replaceAll("\\", "/");
   let out = "";
   let i = 0;
