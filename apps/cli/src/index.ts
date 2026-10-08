@@ -7,6 +7,7 @@ import {
   runRepl,
   permissionEngine,
   buildContext,
+  DEFAULT_CONTEXT_BUDGET,
   commandHelp,
   initContext,
   PermissionMode,
@@ -55,6 +56,7 @@ Options:
   --allow-tool <tool[@pattern]>   Allow a tool (optionally with glob pattern for Bash)
   --deny-tool <tool[@pattern]>    Deny a tool (optionally with glob pattern for Bash)
   --dangerously-skip-permissions  Approve all tools without asking (alias for --permission-mode bypass)
+  --context-budget <tokens>        Auto-compact history above this many tokens
 
 Examples:
   fable
@@ -112,6 +114,7 @@ async function cmdPrint(
   permissionMode: PermissionMode,
   allowTools: Array<{ tool: string; pattern?: string }>,
   denyTools: Array<{ tool: string; pattern?: string }>,
+  contextBudget: number,
 ): Promise<void> {
   await permissionEngine.load();
   if (permissionMode) permissionEngine.setMode(permissionMode);
@@ -136,6 +139,7 @@ async function cmdPrint(
       skipPermissions,
       permissionMode,
       extraContext,
+      contextBudget,
       onToolEvent: showToolEvent,
       onPermissionPrompt: permissionPrompt,
     })) {
@@ -153,6 +157,7 @@ async function cmdPrint(
     skipPermissions,
     permissionMode,
     extraContext,
+    contextBudget,
     onUsage: (u) => {
       usage = u;
     },
@@ -192,7 +197,9 @@ async function main(): Promise<void> {
   let shouldResume = false;
   let shouldContinue = false;
   let format: OutputFormat = "text";
+  // contextBudget parsed below
   let permissionMode: PermissionMode = "default";
+  let contextBudget = DEFAULT_CONTEXT_BUDGET;
   const allowTools: Array<{ tool: string; pattern?: string }> = [];
   const denyTools: Array<{ tool: string; pattern?: string }> = [];
 
@@ -232,6 +239,12 @@ async function main(): Promise<void> {
       if (value === undefined || value === "") throw new Error("--deny-tool needs a value");
       denyTools.push(parseToolSpec(value));
       i++;
+    } else if (arg === `--context-budget`) {
+      const raw = rest[i + 1];
+      const n = raw === undefined ? Number.NaN : Number(raw);
+      if (!Number.isInteger(n) || n < 1000) throw new Error(`--context-budget must be an integer >= 1000`);
+      contextBudget = n;
+      i++;
     } else if (arg === "--dangerously-skip-permissions") {
       skipPermissions = true;
       permissionMode = "bypass";
@@ -260,6 +273,7 @@ if (head === undefined) {
       maxTurns,
       skipPermissions,
       permissionMode,
+      contextBudget,
       sessionId,
       resume: shouldResume,
       onPermissionPrompt: permissionPrompt,
@@ -328,7 +342,17 @@ if (head === undefined) {
         promptParts.push(arg);
       }
     }
-    await cmdPrint(promptParts.join(" "), model, format, maxTurns, skipPermissions, permissionMode, allowTools, denyTools);
+    await cmdPrint(
+      promptParts.join(" "),
+      model,
+      format,
+      maxTurns,
+      skipPermissions,
+      permissionMode,
+      allowTools,
+      denyTools,
+      contextBudget,
+    );
     return;
   }
   throw new Error(`unknown command "${head}" — see fable --help`);
