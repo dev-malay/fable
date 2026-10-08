@@ -10,6 +10,8 @@ import {
   buildContext,
   loadContext,
   loadSkills,
+  compactHistory,
+  DEFAULT_CONTEXT_BUDGET,
   COMMAND_MAP,
   commandHelp,
 } from "./index.js";
@@ -49,6 +51,7 @@ interface ReplContext {
   messages: ChatMessage[];
   tools: ToolEvent[];
   extraContext: string;
+  contextBudget: number;
   submit: (prompt: string) => Promise<void>;
 }
 
@@ -116,10 +119,27 @@ async function handleSlash(line: string, ctx: ReplContext): Promise<boolean> {
       }
     },
     compact: async () => {
-      console.log("\x1b[90m[compact not yet implemented - clears local history only]\x1b[0m");
+      if (ctx.messages.length === 0) {
+        console.log("Nothing to compact yet.");
+        return;
+      }
+      const result = await compactHistory([...ctx.messages], ctx.session.id, {
+        model: ctx.model,
+        apiKey: process.env.OPENROUTER_API_KEY ?? "",
+        contextBudget: ctx.contextBudget,
+      });
+      if (!result.compacted) {
+        console.log(
+          `Nothing to compact — ${ctx.messages.length} messages is within the ${ctx.contextBudget} token budget.`,
+        );
+        return;
+      }
+      ctx.messages = result.messages;
       ctx.history = [];
-      ctx.messages = [];
-      ctx.tools = [];
+      await saveSession(ctx);
+      console.log(
+        `\x1b[32mCompacted\x1b[0m ${result.foldCount} earlier messages into a ${result.summaryChars}-char summary.`,
+      );
     },
     model: async () => {
       if (!arg) {
@@ -205,6 +225,7 @@ export async function runRepl(options: {
   sessionId?: string;
   resume?: boolean;
   extraContext?: string;
+  contextBudget?: number;
   onPermissionPrompt?: (tool: string, summary: string, input: Record<string, unknown>) => Promise<"allow" | "deny">;
 }): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
@@ -284,6 +305,7 @@ export async function runRepl(options: {
     messages,
     tools,
     extraContext: options.extraContext ?? (await buildContext(cwd)),
+    contextBudget: options.contextBudget ?? DEFAULT_CONTEXT_BUDGET,
     submit: async () => {},
   };
 
@@ -325,6 +347,11 @@ export async function runRepl(options: {
         permissionMode,
         history: priorHistory,
         extraContext: ctx.extraContext,
+        contextBudget: ctx.contextBudget,
+        sessionId: ctx.session.id,
+        onCompact: ({ foldCount }) => {
+          console.log(`\x1b[90mcompacted ` + foldCount + ' earlier messages to fit the context budget\x1b[0m');
+        },
         cwd: ctx.cwd,
         onToolEvent,
         onRetry: ({ attempt, waitMs }) => {
