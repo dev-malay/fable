@@ -7,6 +7,8 @@ import { sessionStore } from "./session.js";
 import { permissionEngine, PermissionEngine } from "./permissions.js";
 import { formatContext, loadContext } from "./context.js";
 import { formatSkills, loadSkills } from "./skills.js";
+import { compactHistory } from "./compaction.js";
+import { DEFAULT_CONTEXT_BUDGET } from "./compact.js";
 
 export const ENGINE = "openrouter" as const;
 export const VERSION = "0.1.0";
@@ -32,6 +34,9 @@ export interface RunOptions {
   permissionMode?: PermissionMode;
   history?: ChatMessage[];
   extraContext?: string;
+  contextBudget?: number;
+  sessionId?: string;
+  onCompact?: (info: { foldCount: number; summaryChars: number }) => void;
   onUsage?: (usage: TokenUsage) => void;
   onToolEvent?: (event: ToolEvent) => void;
   onRetry?: (info: { attempt: number; waitMs: number; reason: string }) => void;
@@ -115,7 +120,19 @@ export async function* runPrompt(prompt: string, options: RunOptions = {}): Asyn
     { role: "system", content: SYSTEM_PROMPT + (options.extraContext ?? "") },
   ];
 
-  for (const prior of options.history ?? []) {
+  let priorTurns = options.history ?? [];
+  if (priorTurns.length > 0) {
+    const result = await compactHistory(priorTurns, options.sessionId ?? "adhoc", {
+      model,
+      apiKey: readApiKey(),
+      contextBudget: options.contextBudget ?? DEFAULT_CONTEXT_BUDGET,
+    });
+    if (result.compacted) {
+      options.onCompact?.({ foldCount: result.foldCount, summaryChars: result.summaryChars });
+    }
+    priorTurns = result.messages;
+  }
+  for (const prior of priorTurns) {
     if (prior.content.trim() === "") continue;
     messages.push({ role: prior.role, content: prior.content })
   }
@@ -268,4 +285,15 @@ export { loadContext, formatContext, type LoadedContext } from "./context.js";
 export { loadSkills, getSkill, type Skill } from "./skills.js";
 export { COMMANDS, COMMAND_MAP, commandHelp, type CommandDef } from "./commands.js";
 export { initContext } from "./init.js";
+export { compactHistory, type CompactOptions, type CompactResult } from "./compaction.js";
+export {
+  DEFAULT_CONTEXT_BUDGET,
+  KEEP_RECENT_TURNS,
+  estimateTokens,
+  estimateMessagesTokens,
+  isOverBudget,
+  planCompaction,
+  buildTranscript,
+  applySummary,
+} from "./compact.js";
 export type { PermissionMode, PermissionRule, PermissionDecision } from "@fable/protocol";
